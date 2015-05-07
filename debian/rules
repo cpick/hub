@@ -1,0 +1,21 @@
+#!/usr/bin/make -f
+
+export DH_OPTIONS
+
+export DH_GOPKG := github.com/github/hub
+
+%:
+	dh $@ --buildsystem=golang --with=golang
+
+# TODO: TestGitDir and TestSaveAlwaysReportOption currently fail when they
+# attempt to clone the test repository.
+# Disable tests as a workaround.
+override_dh_auto_test:
+
+# The golang buildsystem installs the .go files, remove them
+override_dh_auto_install:
+	dh_auto_install
+	rm -r $(CURDIR)/debian/hub/usr/share
+	mkdir -p $(CURDIR)/debian/hub/etc/bash_completion.d
+	cp $(CURDIR)/etc/hub.bash_completion.sh \
+		$(CURDIR)/debian/hub/etc/bash_completion.d/hub

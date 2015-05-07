@@ -1,0 +1,8 @@
+hub (2.2.1-0ubuntu0ppa1) trusty; urgency=low
+
+  * Fix crash when running hub checkout with invalid flags: #812, #839 & #856
+  * Fix hub merge <PULL-REQUEST-URL> in some cases: #818
+  * Fix parsing ~/.ssh/config regarding case-sensitivity: #830
+  * Handle empty keys in ~/.gitconfig: #860
+
+ -- Chris Pick <chris@chrispick.com>  Thu, 07 May 2015 16:21:55 -0400

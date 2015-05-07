@@ -1,0 +1,17 @@
+Source: hub
+Section: vcs
+Priority: extra
+Maintainer: Chris Pick <chris@chrispick.com>
+Build-Depends: debhelper (>= 8.0.0), dh-golang, golang-go (>= 1.4.1)
+Standards-Version: 3.9.5
+Vcs-Git: https://github.com/github/hub.git
+Vcs-Browser: https://github.com/github/hub
+Homepage: https://hub.github.com/
+
+Package: hub
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, git
+Built-Using: ${misc:Built-Using}
+Description: hub helps you win at git
+ hub is a command line tool that wraps git in order to extend it with extra
+ features and commands that make working with GitHub easier.
