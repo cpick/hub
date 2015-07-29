@@ -19,3 +19,13 @@ override_dh_auto_install:
 	mkdir -p $(CURDIR)/debian/hub/etc/bash_completion.d
 	cp $(CURDIR)/etc/hub.bash_completion.sh \
 		$(CURDIR)/debian/hub/etc/bash_completion.d/hub
+	chmod -x $(CURDIR)/debian/hub/etc/bash_completion.d/hub
+	# TODO The link below works around:
+	# https://github.com/github/hub/issues/592
+	# Once that's fixed, this link should be deleted and the above 'hub'
+	# completion file should be moved to:
+	# "/usr/share/bash-completion/completions/hub"
+	# or perhaps more pedantically:
+	# "`pkg-config --variable=completionsdir bash-completion`/hub"
+	ln -s /usr/share/bash-completion/completions/git \
+		$(CURDIR)/debian/hub/etc/bash_completion.d/git

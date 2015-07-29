@@ -1,3 +1,9 @@
+hub (2.2.1-0ubuntu0ppa2) trusty; urgency=low
+
+  * Work around dynamic-loading issue with bash completion #592
+
+ -- Chris Pick <chris@chrispick.com>  Wed, 29 Jul 2015 17:06:02 -0400
+
 hub (2.2.1-0ubuntu0ppa1) trusty; urgency=low
 
   * Fix crash when running hub checkout with invalid flags: #812, #839 & #856
