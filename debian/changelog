@@ -1,3 +1,20 @@
+hub (2.2.2-0ubuntu0ppa1) xenial; urgency=low
+
+  * Fix hub help browse
+  * Colorized Windows console
+  * Avoid depending on a hardcoded list of git global flags
+  * More efficient --noop detection
+  * Allow hub merge --ff
+  * Read $GITHUB_TOKEN environment variable and use as OAuth token, ignoring ~/.config/hub
+  * Cache current config after loading it from disk for the first time
+  * Handle git worktrees when computing the head repo
+  * Add hub version to crash report
+  * Enhance hub ci-status to consume combined statuses API endpoint
+  * Fix compare crash when used on a non-GitHub repo
+  * Ensure that project comparison is done case-insensitive
+
+ -- Chris Pick <chris@chrispick.com>  Fri, 06 May 2016 23:31:54 -0400
+
 hub (2.2.1-0ubuntu0ppa2) trusty; urgency=low
 
   * Work around dynamic-loading issue with bash completion #592
