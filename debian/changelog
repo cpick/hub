@@ -1,3 +1,24 @@
+hub (2.2.3-0ubuntu0ppa1) xenial; urgency=low
+
+  * Fix hub browse opening current branch pushed to fork
+  * Handle all sorts of weird git remote URLs:
+  * git+ssh://github.com/... (scheme)
+  * ssh://github.com:22/... (port number)
+  * git@github.com:/... (colon+slash)
+  * Handle git remotes that have been configured with invalid pushUrl
+  * Avoid cross-platform issues around user.Current()
+  * Prompt for credentials when running unauthenticated git init -g
+  * Improve detecting when hub clone is referencing a local resource
+  * Enable git fetch /path/to/my.bundle
+  * Properly support -C git global flag
+  * Fix crash in hub fork when there is no origin remote
+  * Have HUB_VERBOSE=1 mode also log externally run commands
+  * Document that hub clone directory is optional
+  * Clarify "Unknown Shell" Error Message in git alias
+  * Have hub help hub open hub man page
+
+ -- Chris Pick <chris@chrispick.com>  Fri, 06 May 2016 23:34:17 -0400
+
 hub (2.2.2-0ubuntu0ppa1) xenial; urgency=low
 
   * Fix hub help browse
