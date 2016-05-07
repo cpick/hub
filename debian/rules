@@ -3,6 +3,7 @@
 export DH_OPTIONS
 
 export DH_GOPKG := github.com/github/hub
+export DH_GOLANG_BUILDPKG := $(DH_GOPKG)
 
 %:
 	dh $@ --buildsystem=golang --with=golang
