@@ -1,3 +1,25 @@
+hub (2.2.4-0ubuntu0ppa1) xenial; urgency=low
+
+  Bug fixes:
+  * Preserve git global flags when executing final git command
+  * Improved support for renamed repos in clone, fork, and pull-request commands
+  * Expand environment variables in GIT_EDITOR configuration
+  * Check if GitHub repo exists before every hub clone
+
+  GitHub Enterprise fixes:
+  * Consistently prepend /api/v3/ to request when using GHE
+  * Fix GHE host prompts for hub remote commands
+  * Fix case when multiple GHE hosts are configured
+
+  Other improvements:
+  * Improve HTTP debugging by including query params
+  * Prompt for user when the config has a token but no user
+  * Infer project name from git workdir root name instead of PWD
+  * Change Fish instructions for git alias to a function
+
+
+ -- Chris Pick <chris@chrispick.com>  Thu, 06 Apr 2017 15:41:43 -0400
+
 hub (2.2.3-0ubuntu0ppa1) xenial; urgency=low
 
   * Fix hub browse opening current branch pushed to fork
