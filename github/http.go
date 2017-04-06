@@ -40,6 +40,7 @@ func (t *verboseTransport) RoundTrip(req *http.Request) (resp *http.Response, er
 		req = cloneRequest(req)
 		req.Header.Set("X-Original-Scheme", req.URL.Scheme)
 		req.Header.Set("X-Original-Port", port)
+		req.Host = req.URL.Host
 		req.URL.Scheme = t.OverrideURL.Scheme
 		req.URL.Host = t.OverrideURL.Host
 	}
@@ -54,7 +55,7 @@ func (t *verboseTransport) RoundTrip(req *http.Request) (resp *http.Response, er
 }
 
 func (t *verboseTransport) dumpRequest(req *http.Request) {
-	info := fmt.Sprintf("> %s %s://%s%s", req.Method, req.URL.Scheme, req.Host, req.URL.Path)
+	info := fmt.Sprintf("> %s %s://%s%s", req.Method, req.URL.Scheme, req.URL.Host, req.URL.RequestURI())
 	t.verbosePrintln(info)
 	t.dumpHeaders(req.Header, ">")
 	body := t.dumpBody(req.Body)
@@ -135,7 +136,22 @@ func newHttpClient(testHost string, verbose bool) *http.Client {
 		Out:         ui.Stderr,
 		Colorized:   ui.IsTerminal(os.Stderr),
 	}
-	return &http.Client{Transport: tr}
+	return &http.Client{
+		Transport: tr,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) > 2 {
+				return fmt.Errorf("too many redirects")
+			} else {
+				for key, vals := range via[0].Header {
+					lkey := strings.ToLower(key)
+					if !strings.HasPrefix(lkey, "x-original-") && via[0].Host == req.URL.Host || lkey != "authorization" {
+						req.Header[key] = vals
+					}
+				}
+				return nil
+			}
+		},
+	}
 }
 
 func cloneRequest(req *http.Request) *http.Request {
@@ -179,29 +195,114 @@ type simpleClient struct {
 	accessToken string
 }
 
-func (c *simpleClient) Get(path string) (res *simpleResponse, err error) {
+func (c *simpleClient) performRequest(method, path string, body io.Reader, configure func(*http.Request)) (*simpleResponse, error) {
 	url, err := url.Parse(path)
-	if err != nil {
-		return
+	if err == nil {
+		url = c.rootUrl.ResolveReference(url)
+		return c.performRequestUrl(method, url, body, configure, 2)
+	} else {
+		return nil, err
 	}
+}
 
-	url = c.rootUrl.ResolveReference(url)
-	req, err := http.NewRequest("GET", url.String(), nil)
+func (c *simpleClient) performRequestUrl(method string, url *url.URL, body io.Reader, configure func(*http.Request), redirectsRemaining int) (res *simpleResponse, err error) {
+	req, err := http.NewRequest(method, url.String(), body)
 	if err != nil {
 		return
 	}
 	req.Header.Set("Authorization", "token "+c.accessToken)
+	req.Header.Set("User-Agent", UserAgent)
+	if configure != nil {
+		configure(req)
+	}
+
+	var bodyBackup io.ReadWriter
+	if req.Body != nil {
+		bodyBackup = &bytes.Buffer{}
+		req.Body = ioutil.NopCloser(io.TeeReader(req.Body, bodyBackup))
+	}
 
 	httpResponse, err := c.httpClient.Do(req)
-	if err == nil {
-		res = &simpleResponse{httpResponse}
+	if err != nil {
+		return
+	}
+
+	res = &simpleResponse{httpResponse}
+	if res.StatusCode == 307 && redirectsRemaining > 0 {
+		url, err = url.Parse(res.Header.Get("Location"))
+		if err != nil || url.Host != req.URL.Host || url.Scheme != req.URL.Scheme {
+			return
+		}
+		res, err = c.performRequestUrl(method, url, bodyBackup, configure, redirectsRemaining-1)
 	}
 
 	return
 }
 
+func (c *simpleClient) jsonRequest(method, path string, body interface{}) (*simpleResponse, error) {
+	json, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	buf := bytes.NewBuffer(json)
+
+	return c.performRequest(method, path, buf, func(req *http.Request) {
+		req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	})
+}
+
+func (c *simpleClient) Get(path string) (*simpleResponse, error) {
+	return c.performRequest("GET", path, nil, nil)
+}
+
+func (c *simpleClient) Delete(path string) (*simpleResponse, error) {
+	return c.performRequest("DELETE", path, nil, nil)
+}
+
+func (c *simpleClient) PostJSON(path string, payload interface{}) (*simpleResponse, error) {
+	return c.jsonRequest("POST", path, payload)
+}
+
+func (c *simpleClient) PatchJSON(path string, payload interface{}) (*simpleResponse, error) {
+	return c.jsonRequest("PATCH", path, payload)
+}
+
+func (c *simpleClient) PostFile(path, filename string) (*simpleResponse, error) {
+	stat, err := os.Stat(filename)
+	if err != nil {
+		return nil, err
+	}
+
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	return c.performRequest("POST", path, file, func(req *http.Request) {
+		req.ContentLength = stat.Size()
+		req.Header.Set("Content-Type", "application/octet-stream")
+	})
+}
+
 type simpleResponse struct {
 	*http.Response
+}
+
+type errorInfo struct {
+	Message  string       `json:"message"`
+	Errors   []fieldError `json:"errors"`
+	Response *http.Response
+}
+type fieldError struct {
+	Resource string `json:"resource"`
+	Message  string `json:"message"`
+	Code     string `json:"code"`
+	Field    string `json:"field"`
+}
+
+func (e *errorInfo) Error() string {
+	return e.Message
 }
 
 func (res *simpleResponse) Unmarshal(dest interface{}) (err error) {
@@ -213,4 +314,21 @@ func (res *simpleResponse) Unmarshal(dest interface{}) (err error) {
 	}
 
 	return json.Unmarshal(body, dest)
+}
+
+func (res *simpleResponse) ErrorInfo() (msg *errorInfo, err error) {
+	defer res.Body.Close()
+
+	body, err := ioutil.ReadAll(res.Body)
+	if err != nil {
+		return
+	}
+
+	msg = &errorInfo{}
+	err = json.Unmarshal(body, msg)
+	if err == nil {
+		msg.Response = res.Response
+	}
+
+	return
 }

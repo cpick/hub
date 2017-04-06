@@ -19,8 +19,6 @@ setup_gopath() {
     export GOPATH="$TMP_GOPATH"
   fi
 
-  export GO15VENDOREXPERIMENT=1
-
   mkdir -p "${TMP_SELF%/*}"
   ln -snf "$PWD" "$TMP_SELF" 2>/dev/null || {
     rm -rf "$TMP_SELF"
@@ -57,7 +55,7 @@ test_hub() {
 
 case "$1" in
 "" )
-  build_hub hub${windows:+.exe}
+  build_hub bin/hub${windows:+.exe}
   ;;
 -o )
   shift
