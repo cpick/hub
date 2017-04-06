@@ -1,3 +1,11 @@
+hub (2.2.7-0ubuntu0ppa1) xenial; urgency=low
+
+  * Show error to stderr if shelling out failed
+  * Fix printing content on Windows after successful run
+  * Fix Windows installer for OS usernames with spaces
+
+ -- Chris Pick <chris@chrispick.com>  Thu, 06 Apr 2017 15:45:28 -0400
+
 hub (2.2.6-0ubuntu0ppa1) xenial; urgency=low
 
   * Avoid crashing in pull-request error processing
