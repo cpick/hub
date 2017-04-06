@@ -1,3 +1,11 @@
+hub (2.2.5-0ubuntu0ppa1) xenial; urgency=low
+
+  * Fix pull-request to expect 201 over 200
+  * Fix vanilla fetch with non-GitHub remotes
+  * Fix comma-separated fetch with more than 2 names
+
+ -- Chris Pick <chris@chrispick.com>  Thu, 06 Apr 2017 15:43:47 -0400
+
 hub (2.2.4-0ubuntu0ppa1) xenial; urgency=low
 
   Bug fixes:
