@@ -2,9 +2,9 @@ package commands
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/github/hub/github"
+	"github.com/github/hub/ui"
 	"github.com/github/hub/utils"
 )
 
@@ -77,13 +77,16 @@ func fork(cmd *Command, args *Args) {
 		}
 	}
 
-	if flagForkNoRemote {
-		os.Exit(0)
-	} else {
+	args.NoForward()
+	if !flagForkNoRemote {
 		originURL := originRemote.URL.String()
 		url := forkProject.GitURL("", "", true)
-		args.Replace("git", "remote", "add", "-f", newRemoteName, originURL)
-		args.After("git", "remote", "set-url", newRemoteName, url)
-		args.After("echo", fmt.Sprintf("new remote: %s", newRemoteName))
+		args.Before("git", "remote", "add", "-f", newRemoteName, originURL)
+		args.Before("git", "remote", "set-url", newRemoteName, url)
+
+		args.AfterFn(func() error {
+			ui.Printf("new remote: %s\n", newRemoteName)
+			return nil
+		})
 	}
 }
