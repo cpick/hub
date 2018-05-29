@@ -8,18 +8,20 @@ Feature: hub create
       """
       post('/user/repos') {
         assert :private => false
+        status 201
         json :full_name => 'mislav/dotfiles'
       }
       """
     When I successfully run `hub create`
     Then the url for "origin" should be "git@github.com:mislav/dotfiles.git"
-    And the output should contain exactly "created repository: mislav/dotfiles\n"
+    And the output should contain exactly "https://github.com/mislav/dotfiles\n"
 
   Scenario: Create private repo
     Given the GitHub API server:
       """
       post('/user/repos') {
         assert :private => true
+        status 201
         json :full_name => 'mislav/dotfiles'
       }
       """
@@ -30,6 +32,7 @@ Feature: hub create
     Given the GitHub API server:
       """
       post('/user/repos') {
+        status 201
         json :full_name => 'mislav/dotfiles'
       }
       """
@@ -41,12 +44,13 @@ Feature: hub create
     Given the GitHub API server:
       """
       post('/orgs/acme/repos') {
+        status 201
         json :full_name => 'acme/dotfiles'
       }
       """
     When I successfully run `hub create acme/dotfiles`
     Then the url for "origin" should be "git@github.com:acme/dotfiles.git"
-    And the output should contain exactly "created repository: acme/dotfiles\n"
+    And the output should contain exactly "https://github.com/acme/dotfiles\n"
 
   Scenario: Creating repo failed
     Given the GitHub API server:
@@ -63,6 +67,7 @@ Feature: hub create
       """
       post('/user/repos') {
         assert :name => 'myconfig'
+        status 201
         json :full_name => 'mislav/myconfig'
       }
       """
@@ -75,6 +80,7 @@ Feature: hub create
       post('/user/repos') {
         assert :description => 'mydesc',
                :homepage => 'http://example.com'
+        status 201
         json :full_name => 'mislav/dotfiles'
       }
       """
@@ -87,10 +93,18 @@ Feature: hub create
     Then the stderr should contain "'create' must be run from inside a git repository"
     And the exit status should be 1
 
+  Scenario: Cannot create from bare repo
+    Given the current dir is not a repo
+    And I run `git init --bare`
+    When I run `hub create`
+    Then the stderr should contain exactly "unable to determine git working directory\n"
+    And the exit status should be 1
+
   Scenario: Origin remote already exists
     Given the GitHub API server:
       """
       post('/user/repos') {
+        status 201
         json :full_name => 'mislav/dotfiles'
       }
       """
@@ -102,6 +116,7 @@ Feature: hub create
     Given the GitHub API server:
       """
       post('/user/repos') {
+        status 201
         json :full_name => 'mislav/dotfiles'
       }
       """
@@ -115,19 +130,32 @@ Feature: hub create
       get('/repos/mislav/dotfiles') { status 200 }
       """
     When I successfully run `hub create`
-    Then the output should contain "mislav/dotfiles already exists on github.com\n"
+    Then the output should contain "Existing repository detected. Updating git remote\n"
     And the url for "origin" should be "git@github.com:mislav/dotfiles.git"
 
   Scenario: API response changes the clone URL
     Given the GitHub API server:
       """
       post('/user/repos') {
+        status 201
         json :full_name => 'Mooslav/myconfig'
       }
       """
     When I successfully run `hub create`
     Then the url for "origin" should be "git@github.com:Mooslav/myconfig.git"
-    And the output should contain exactly "created repository: Mooslav/myconfig\n"
+    And the output should contain exactly "https://github.com/Mooslav/myconfig\n"
+
+  Scenario: Open new repository in web browser
+    Given the GitHub API server:
+      """
+      post('/user/repos') {
+        status 201
+        json :full_name => 'Mooslav/myconfig'
+      }
+      """
+    When I successfully run `hub create -o`
+    Then the output should contain exactly ""
+    And "open https://github.com/Mooslav/myconfig" should be run
 
   Scenario: Current directory contains spaces
     Given I am in "my dot files" git repo
@@ -135,6 +163,7 @@ Feature: hub create
       """
       post('/user/repos') {
         assert :name => 'my-dot-files'
+        status 201
         json :full_name => 'mislav/my-dot-files'
       }
       """
@@ -147,6 +176,7 @@ Feature: hub create
       get('/repos/mislav/dotfiles') { status 404 }
       post('/user/repos') {
         response['location'] = 'http://disney.com'
+        status 201
         json :full_name => 'mislav/dotfiles'
       }
       """
@@ -156,6 +186,7 @@ Feature: hub create
       """
       > GET https://api.github.com/repos/mislav/dotfiles
       > Authorization: token [REDACTED]
+      > Accept: application/vnd.github.v3+json;charset=utf-8
       < HTTP 404
       """
     And the stderr should contain:
@@ -165,7 +196,7 @@ Feature: hub create
       """
     And the stderr should contain:
       """
-      < HTTP 200
+      < HTTP 201
       < Location: http://disney.com
       {"full_name":"mislav/dotfiles"}\n
       """

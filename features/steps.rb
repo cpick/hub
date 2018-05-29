@@ -82,9 +82,24 @@ Given(/^there is a commit named "([^"]+)"$/) do |name|
   run_silent %(git reset --quiet --hard HEAD^)
 end
 
+Given(/^there is a git FETCH_HEAD$/) do
+  empty_commit
+  empty_commit
+  in_current_dir do
+    File.open(".git/FETCH_HEAD", "w") do |fetch_head|
+      fetch_head.puts "%s\t\t'refs/heads/made-up' of git://github.com/made/up.git" % `git rev-parse HEAD`.chomp
+    end
+  end
+  run_silent %(git reset --quiet --hard HEAD^)
+end
+
 When(/^I make (a|\d+) commits?(?: with message "([^"]+)")?$/) do |num, msg|
   num = num == 'a' ? 1 : num.to_i
   num.times { empty_commit(msg) }
+end
+
+When(/^I make a commit with message:$/) do |msg|
+  empty_commit(msg)
 end
 
 Then(/^the latest commit message should be "([^"]+)"$/) do |subject|
@@ -191,6 +206,14 @@ end
 Then(/^the "([^"]*)" submodule url should be "([^"]*)"$/) do |name, url|
   found = run_silent %(git config --get-all submodule."#{name}".url)
   expect(found).to eql(url)
+end
+
+Then(/^"([^"]*)" should merge "([^"]*)" from remote "([^"]*)"$/) do |name, merge, remote|
+  actual_remote = run_silent %(git config --get-all branch.#{name}.remote)
+  expect(remote).to eql(actual_remote)
+
+  actual_merge = run_silent %(git config --get-all branch.#{name}.merge)
+  expect(merge).to eql(actual_merge)
 end
 
 Then(/^there should be no "([^"]*)" remote$/) do |remote_name|
