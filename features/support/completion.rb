@@ -6,6 +6,7 @@
 # - tmux
 # - bash
 # - zsh
+# - fish
 # - git
 
 require 'fileutils'
@@ -16,6 +17,7 @@ tmpdir = Pathname.new(ENV.fetch('TMPDIR', '/tmp')) + 'hub-test'
 cpldir = tmpdir + 'completion'
 zsh_completion = File.expand_path('../../../etc/hub.zsh_completion', __FILE__)
 bash_completion = File.expand_path('../../../etc/hub.bash_completion.sh', __FILE__)
+fish_completion = File.expand_path('../../../etc/hub.fish_completion', __FILE__)
 
 _git_prefix = nil
 
@@ -27,13 +29,15 @@ git_prefix = lambda {
 }
 
 git_distributed_zsh_completion = lambda {
-  [ git_prefix.call + 'share/git-core/contrib/completion/git-completion.zsh',
+  [ git_prefix.call + 'contrib/completion/git-completion.zsh',
+    git_prefix.call + 'share/git-core/contrib/completion/git-completion.zsh',
     git_prefix.call + 'share/zsh/site-functions/_git',
   ].detect {|p| p.exist? }
 }
 
 git_distributed_bash_completion = lambda {
-  [ git_prefix.call + 'share/git-core/contrib/completion/git-completion.bash',
+  [ git_prefix.call + 'contrib/completion/git-completion.bash',
+    git_prefix.call + 'share/git-core/contrib/completion/git-completion.bash',
     git_prefix.call + 'share/git-core/git-completion.bash',
     git_prefix.call + 'etc/bash_completion.d/git-completion.bash',
     Pathname.new('/etc/bash_completion.d/git'),
@@ -44,16 +48,21 @@ git_distributed_bash_completion = lambda {
 
 link_completion = Proc.new { |from, name|
   raise ArgumentError, from.to_s unless File.exist?(from)
+  FileUtils.mkdir_p(cpldir)
   FileUtils.ln_s(from, cpldir + name, :force => true)
+}
+
+create_file = lambda { |name, &block|
+  FileUtils.mkdir_p(File.dirname(name))
+  File.open(name, 'w', &block)
 }
 
 setup_tmp_home = lambda { |shell|
   FileUtils.rm_rf(tmpdir)
-  FileUtils.mkdir_p(cpldir)
 
   case shell
   when 'zsh'
-    File.open(File.join(tmpdir, '.zshrc'), 'w') do |zshrc|
+    create_file.call(tmpdir + '.zshrc') do |zshrc|
       zshrc.write <<-SH
         PS1='$ '
         for site_fn in /usr/{local/,}share/zsh/site-functions; do
@@ -66,7 +75,7 @@ setup_tmp_home = lambda { |shell|
       SH
     end
   when 'bash'
-    File.open(File.join(tmpdir, '.bashrc'), 'w') do |bashrc|
+    create_file.call(tmpdir + '.bashrc') do |bashrc|
       bashrc.write <<-SH
         PS1='$ '
         alias git=hub
@@ -74,10 +83,34 @@ setup_tmp_home = lambda { |shell|
         . '#{bash_completion}'
       SH
     end
+  when 'fish'
+    create_file.call(tmpdir + '.config/fish/config.fish') do |fishcfg|
+      fishcfg.write <<-SH
+        function fish_prompt
+          echo '$ '
+        end
+      SH
+    end
+
+    create_file.call(tmpdir + '.config/fish/functions/git.fish') do |gitfn|
+      gitfn.write <<-SH
+        function git --wraps hub
+          hub $argv
+        end
+      SH
+    end
+
+    completion_dest = tmpdir + '.config/fish/completions/hub.fish'
+    FileUtils.mkdir_p(File.dirname(completion_dest))
+    FileUtils.ln_s(fish_completion, completion_dest)
   end
 }
 
 $tmux = nil
+$installed_shells = Hash.new { |cache, shell|
+  `which #{shell} 2>/dev/null`
+  cache[shell] = $?.success?
+}
 
 Before('@completion') do
   unless $tmux
@@ -97,7 +130,12 @@ World Module.new {
   attr_reader :shell
 
   def set_shell(shell)
-    @shell = shell
+    if $installed_shells[shell]
+      @shell = shell
+      true
+    else
+      false
+    end
   end
 
   define_method(:tmux_pane) do
@@ -153,26 +191,46 @@ World Module.new {
     end
   end
 
+  def tmux_output_lines
+    tmux_pane_contents.split("\n").drop_while { |l| not l.start_with?('$') }.reject do |line|
+      line.start_with?('$')
+    end
+  end
+
   def tmux_completion_menu
     tmux_wait_for_completion
     hash = {}
-    tmux_pane_contents.split("\n").grep(/^[^\$].+ -- /).each { |line|
-      item, description = line.split(/ +-- +/, 2)
-      hash[item] = description
-    }
+    if 'fish' == shell
+      tmux_output_lines.each do |line|
+        line.scan(/([^(]+)\((.+?)\)/).each do |flags, description|
+          flags.strip.split(/\s+/).each do |flag|
+            hash[flag] = description
+          end
+        end
+      end
+    else
+      tmux_output_lines.each do |line|
+        item, description = line.split(/ +-- +/, 2)
+        hash[item] = description if description
+      end
+    end
     hash
   end
 
   def tmux_completion_menu_basic
     tmux_wait_for_completion
-    tmux_pane_contents.split("\n").grep(/^[^\$]/).map {|line|
-      line.split(/\s+/)
-    }.flatten
+    if 'fish' == shell
+      tmux_completion_menu.keys
+    else
+      tmux_output_lines.flat_map do |line|
+        line.split(/\s+/)
+      end
+    end
   end
 }
 
 Given(/^my shell is (\w+)$/) do |shell|
-  set_shell(shell)
+  set_shell(shell) || pending
   setup_tmp_home.call(shell)
 end
 
@@ -189,6 +247,11 @@ Given(/^I'm using ((?:zsh|git)-distributed) base git completions$/) do |type|
         link_completion.call(git_distributed_bash_completion.call, 'git-completion.bash')
       else
         warn "warning: git-distributed zsh completion wasn't found; using zsh-distributed instead"
+      end
+    end
+    if 'bash' == shell
+      unless git_distributed_bash_completion.call
+        raise "git-distributed bash completion wasn't found. Completion won't work."
       end
     end
   else

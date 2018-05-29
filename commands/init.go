@@ -13,10 +13,24 @@ var cmdInit = &Command{
 	Run:          gitInit,
 	GitExtension: true,
 	Usage:        "init -g",
-	Short:        "Create an empty git repository or reinitialize an existing one",
-	Long: `Create a git repository as with git-init(1) and add remote origin at
-"git@github.com:USER/REPOSITORY.git"; USER is your GitHub username and
-REPOSITORY is the current working directory's basename.
+	Long: `Initialize a git repository and create it on GitHub.
+
+## Options:
+	-g
+		After initializing the repository locally, create a "<USER>/<REPO>"
+		repository on GitHub and add it as the "origin" remote.
+
+		<USER> is your GitHub username, while <REPO> is the name of the current
+		working directory.
+
+## Examples:
+		$ hub init -g
+		> git init
+		> git remote add origin git@github.com:USER/REPO.git
+
+## See also:
+
+hub-create(1), hub(1), git-init(1)
 `,
 }
 
@@ -24,11 +38,6 @@ func init() {
 	CmdRunner.Use(cmdInit)
 }
 
-/*
-  $ hub init -g
-  > git init
-  > git remote add origin git@github.com:USER/REPO.git
-*/
 func gitInit(command *Command, args *Args) {
 	err := transformInitArgs(args)
 	utils.Check(err)
@@ -41,13 +50,13 @@ func transformInitArgs(args *Args) error {
 
 	var err error
 	dirToInit := "."
-	hasValueRegxp := regexp.MustCompile("^--(template|separate-git-dir|shared)$")
+	hasValueRegexp := regexp.MustCompile("^--(template|separate-git-dir|shared)$")
 
 	// Find the first argument that isn't related to any of the init flags.
 	// We assume this is the optional `directory` argument to git init.
 	for i := 0; i < args.ParamsSize(); i++ {
 		arg := args.Params[i]
-		if hasValueRegxp.MatchString(arg) {
+		if hasValueRegexp.MatchString(arg) {
 			i++
 		} else if !strings.HasPrefix(arg, "-") {
 			dirToInit = arg

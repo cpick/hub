@@ -2,9 +2,11 @@ package commands
 
 import (
 	"fmt"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/github/hub/git"
 	"github.com/github/hub/github"
@@ -13,24 +15,69 @@ import (
 )
 
 var cmdPullRequest = &Command{
-	Run:   pullRequest,
-	Usage: "pull-request [-f] [-m <MESSAGE>|-F <FILE>|-i <ISSUE>|<ISSUE-URL>] [-o] [-b <BASE>] [-h <HEAD>] ",
-	Short: "Open a pull request on GitHub",
-	Long: `Opens a pull request on GitHub for the project that the "origin" remote
-points to. The default head of the pull request is the current branch.
-Both base and head of the pull request can be explicitly given in one of
-the following formats: "branch", "owner:branch", "owner/repo:branch".
-This command will abort operation if it detects that the current topic
-branch has local commits that are not yet pushed to its upstream branch
-on the remote. To skip this check, use "-f".
+	Run: pullRequest,
+	Usage: `
+pull-request [-focp] [-b <BASE>] [-h <HEAD>] [-r <REVIEWERS> ] [-a <ASSIGNEES>] [-M <MILESTONE>] [-l <LABELS>]
+pull-request -m <MESSAGE> [--edit]
+pull-request -F <FILE> [--edit]
+pull-request -i <ISSUE>
+`,
+	Long: `Create a GitHub pull request.
 
-Without <MESSAGE> or <FILE>, a text editor will open in which title and body
-of the pull request can be entered in the same manner as git commit message.
-Pull request message can also be passed via stdin with "-F -".
+## Options:
+	-f, --force
+		Skip the check for unpushed commits.
 
-If instead of normal <TITLE> an issue number is given with "-i", the pull
-request will be attached to an existing GitHub issue. Alternatively, instead
-of title you can paste a full URL to an issue on GitHub.
+	-m, --message <MESSAGE>
+		Use the first line of <MESSAGE> as pull request title, and the rest as pull
+		request description.
+
+	-F, --file <FILE>
+		Read the pull request title and description from <FILE>.
+
+	-e, --edit
+		Further edit the contents of <FILE> in a text editor before submitting.
+
+	-i, --issue <ISSUE>, <ISSUE-URL>
+		(Deprecated) Convert <ISSUE> to a pull request.
+
+	-o, --browse
+		Open the new pull request in a web browser.
+
+	-c, --copy
+		Put the URL of the new pull request to clipboard instead of printing it.
+
+	-p, --push
+		Push the current branch to <HEAD> before creating the pull request.
+
+	-b, --base <BASE>
+		The base branch in "[OWNER:]BRANCH" format. Defaults to the default branch
+		(usually "master").
+
+	-h, --head <HEAD>
+		The head branch in "[OWNER:]BRANCH" format. Defaults to the current branch.
+
+	-r, --reviewer <USERS>
+		A comma-separated list of GitHub handles to request a review from.
+
+	-a, --assign <USERS>
+		A comma-separated list of GitHub handles to assign to this pull request.
+
+	-M, --milestone <NAME>
+		The milestone name to add to this pull request. Passing the milestone number
+		is deprecated.
+
+	-l, --labels <LABELS>
+		Add a comma-separated list of labels to this pull request.
+
+## Configuration:
+
+	HUB_RETRY_TIMEOUT=<SECONDS>
+		The maximum time to keep retrying after HTTP 422 on '--push' (default: 9).
+
+## See also:
+
+hub(1), hub-merge(1), hub-checkout(1)
 `,
 }
 
@@ -39,9 +86,18 @@ var (
 	flagPullRequestHead,
 	flagPullRequestIssue,
 	flagPullRequestMessage,
+	flagPullRequestMilestone,
 	flagPullRequestFile string
+
 	flagPullRequestBrowse,
+	flagPullRequestCopy,
+	flagPullRequestEdit,
+	flagPullRequestPush,
 	flagPullRequestForce bool
+
+	flagPullRequestAssignees,
+	flagPullRequestReviewers,
+	flagPullRequestLabels listFlag
 )
 
 func init() {
@@ -49,34 +105,20 @@ func init() {
 	cmdPullRequest.Flag.StringVarP(&flagPullRequestHead, "head", "h", "", "HEAD")
 	cmdPullRequest.Flag.StringVarP(&flagPullRequestIssue, "issue", "i", "", "ISSUE")
 	cmdPullRequest.Flag.BoolVarP(&flagPullRequestBrowse, "browse", "o", false, "BROWSE")
+	cmdPullRequest.Flag.BoolVarP(&flagPullRequestCopy, "copy", "c", false, "COPY")
 	cmdPullRequest.Flag.StringVarP(&flagPullRequestMessage, "message", "m", "", "MESSAGE")
+	cmdPullRequest.Flag.BoolVarP(&flagPullRequestEdit, "edit", "e", false, "EDIT")
+	cmdPullRequest.Flag.BoolVarP(&flagPullRequestPush, "push", "p", false, "PUSH")
 	cmdPullRequest.Flag.BoolVarP(&flagPullRequestForce, "force", "f", false, "FORCE")
 	cmdPullRequest.Flag.StringVarP(&flagPullRequestFile, "file", "F", "", "FILE")
+	cmdPullRequest.Flag.VarP(&flagPullRequestAssignees, "assign", "a", "USERS")
+	cmdPullRequest.Flag.VarP(&flagPullRequestReviewers, "reviewer", "r", "USERS")
+	cmdPullRequest.Flag.StringVarP(&flagPullRequestMilestone, "milestone", "M", "", "MILESTONE")
+	cmdPullRequest.Flag.VarP(&flagPullRequestLabels, "labels", "l", "LABELS")
 
 	CmdRunner.Use(cmdPullRequest)
 }
 
-/*
-  # while on a topic branch called "feature":
-  $ hub pull-request
-  [ opens text editor to edit title & body for the request ]
-  [ opened pull request on GitHub for "YOUR_USER:feature" ]
-
-  # explicit pull base & head:
-  $ hub pull-request -b jingweno:master -h jingweno:feature
-
-  $ hub pull-request -m "title\n\nbody"
-  [ create pull request with title & body  ]
-
-  $ hub pull-request -i 123
-  [ attached pull request to issue #123 ]
-
-  $ hub pull-request https://github.com/jingweno/gh/pull/123
-  [ attached pull request to issue #123 ]
-
-  $ hub pull-request -F FILE
-  [ create pull request with title & body from FILE ]
-*/
 func pullRequest(cmd *Command, args *Args) {
 	localRepo, err := github.LocalRepo()
 	utils.Check(err)
@@ -143,9 +185,6 @@ func pullRequest(cmd *Command, args *Args) {
 		}
 	}
 
-	title, body, err := getTitleAndBodyFromFlags(flagPullRequestMessage, flagPullRequestFile)
-	utils.Check(err)
-
 	if headRepo, err := client.Repository(headProject); err == nil {
 		headProject.Owner = headRepo.Owner.Login
 		headProject.Name = headRepo.Name
@@ -163,34 +202,105 @@ func pullRequest(cmd *Command, args *Args) {
 		}
 	}
 
-	var editor *github.Editor
-	if title == "" && flagPullRequestIssue == "" {
-		baseTracking := base
-		headTracking := head
-
-		remote := gitRemoteForProject(baseProject)
-		if remote != nil {
-			baseTracking = fmt.Sprintf("%s/%s", remote.Name, base)
-		}
-		if remote == nil || !baseProject.SameAs(headProject) {
-			remote = gitRemoteForProject(headProject)
-		}
-		if remote != nil {
-			headTracking = fmt.Sprintf("%s/%s", remote.Name, head)
-		}
-
-		message, err := pullRequestChangesMessage(baseTracking, headTracking, fullBase, fullHead)
-		utils.Check(err)
-
-		editor, err = github.NewEditor("PULLREQ", "pull request", message)
-		utils.Check(err)
-
-		title, body, err = editor.EditTitleAndBody()
-		utils.Check(err)
+	messageBuilder := &github.MessageBuilder{
+		Filename: "PULLREQ_EDITMSG",
+		Title:    "pull request",
 	}
+
+	baseTracking := base
+	headTracking := head
+
+	remote := gitRemoteForProject(baseProject)
+	if remote != nil {
+		baseTracking = fmt.Sprintf("%s/%s", remote.Name, base)
+	}
+	if remote == nil || !baseProject.SameAs(headProject) {
+		remote = gitRemoteForProject(headProject)
+	}
+	if remote != nil {
+		headTracking = fmt.Sprintf("%s/%s", remote.Name, head)
+	}
+
+	if flagPullRequestPush && remote == nil {
+		utils.Check(fmt.Errorf("Can't find remote for %s", head))
+	}
+
+	messageBuilder.AddCommentedSection(fmt.Sprintf(`Requesting a pull to %s from %s
+
+Write a message for this pull request. The first block
+of text is the title and the rest is the description.`, fullBase, fullHead))
+
+	if cmd.FlagPassed("message") {
+		messageBuilder.Message = flagPullRequestMessage
+		messageBuilder.Edit = flagPullRequestEdit
+	} else if cmd.FlagPassed("file") {
+		messageBuilder.Message, err = msgFromFile(flagPullRequestFile)
+		utils.Check(err)
+		messageBuilder.Edit = flagPullRequestEdit
+	} else if flagPullRequestIssue == "" {
+		messageBuilder.Edit = true
+
+		headForMessage := headTracking
+		if flagPullRequestPush {
+			headForMessage = head
+		}
+
+		message := ""
+		commitLogs := ""
+
+		commits, _ := git.RefList(baseTracking, headForMessage)
+		if len(commits) == 1 {
+			message, err = git.Show(commits[0])
+			utils.Check(err)
+
+			re := regexp.MustCompile(`\nSigned-off-by:\s.*$`)
+			message = re.ReplaceAllString(message, "")
+		} else if len(commits) > 1 {
+			commitLogs, err = git.Log(baseTracking, headForMessage)
+			utils.Check(err)
+		}
+
+		if commitLogs != "" {
+			messageBuilder.AddCommentedSection("\nChanges:\n\n" + strings.TrimSpace(commitLogs))
+		}
+
+		workdir, _ := git.WorkdirName()
+		if workdir != "" {
+			template, _ := github.ReadTemplate(github.PullRequestTemplate, workdir)
+			if template != "" {
+				message = message + "\n\n\n" + template
+			}
+		}
+
+		messageBuilder.Message = message
+	}
+
+	title, body, err := messageBuilder.Extract()
+	utils.Check(err)
 
 	if title == "" && flagPullRequestIssue == "" {
 		utils.Check(fmt.Errorf("Aborting due to empty pull request title"))
+	}
+
+	if flagPullRequestPush {
+		if args.Noop {
+			args.Before(fmt.Sprintf("Would push to %s/%s", remote.Name, head), "")
+		} else {
+			err = git.Spawn("push", "--set-upstream", remote.Name, fmt.Sprintf("HEAD:%s", head))
+			utils.Check(err)
+		}
+	}
+
+	milestoneNumber := 0
+	if flagPullRequestMilestone != "" {
+		// BC: Don't try to resolve milestone name if it's an integer
+		milestoneNumber, err = strconv.Atoi(flagPullRequestMilestone)
+		if err != nil {
+			milestones, err := client.FetchMilestones(baseProject)
+			utils.Check(err)
+			milestoneNumber, err = findMilestoneNumber(milestones, flagPullRequestMilestone)
+			utils.Check(err)
+		}
 	}
 
 	var pullRequestURL string
@@ -212,54 +322,89 @@ func pullRequest(cmd *Command, args *Args) {
 			issueNum, _ := strconv.Atoi(flagPullRequestIssue)
 			params["issue"] = issueNum
 		}
-		pr, err := client.CreatePullRequest(baseProject, params)
 
-		if err == nil && editor != nil {
-			defer editor.DeleteFile()
+		startedAt := time.Now()
+		numRetries := 0
+		retryDelay := 2
+		retryAllowance := 0
+		if flagPullRequestPush {
+			if allowanceFromEnv := os.Getenv("HUB_RETRY_TIMEOUT"); allowanceFromEnv != "" {
+				retryAllowance, err = strconv.Atoi(allowanceFromEnv)
+				utils.Check(err)
+			} else {
+				retryAllowance = 9
+			}
+		}
+
+		var pr *github.PullRequest
+		for {
+			pr, err = client.CreatePullRequest(baseProject, params)
+			if err != nil && strings.Contains(err.Error(), `Invalid value for "head"`) {
+				if retryAllowance > 0 {
+					retryAllowance -= retryDelay
+					time.Sleep(time.Duration(retryDelay) * time.Second)
+					retryDelay += 1
+					numRetries += 1
+				} else {
+					if numRetries > 0 {
+						duration := time.Now().Sub(startedAt)
+						err = fmt.Errorf("%s\nGiven up after retrying for %.1f seconds.", err, duration.Seconds())
+					}
+					break
+				}
+			} else {
+				break
+			}
+		}
+
+		if err == nil {
+			defer messageBuilder.Cleanup()
 		}
 
 		utils.Check(err)
-		pullRequestURL = pr.HTMLURL
+
+		pullRequestURL = pr.HtmlUrl
+
+		params = map[string]interface{}{}
+		if len(flagPullRequestLabels) > 0 {
+			params["labels"] = flagPullRequestLabels
+		}
+		if len(flagPullRequestAssignees) > 0 {
+			params["assignees"] = flagPullRequestAssignees
+		}
+		if milestoneNumber > 0 {
+			params["milestone"] = milestoneNumber
+		}
+
+		if len(params) > 0 {
+			err = client.UpdateIssue(baseProject, pr.Number, params)
+			utils.Check(err)
+		}
+
+		if len(flagPullRequestReviewers) > 0 {
+			userReviewers := []string{}
+			teamReviewers := []string{}
+			for _, reviewer := range flagPullRequestReviewers {
+				if strings.Contains(reviewer, "/") {
+					teamReviewers = append(teamReviewers, strings.SplitN(reviewer, "/", 2)[1])
+				} else {
+					userReviewers = append(userReviewers, reviewer)
+				}
+			}
+			err = client.RequestReview(baseProject, pr.Number, map[string]interface{}{
+				"reviewers":      userReviewers,
+				"team_reviewers": teamReviewers,
+			})
+			utils.Check(err)
+		}
 	}
 
 	if flagPullRequestIssue != "" {
 		ui.Errorln("Warning: Issue to pull request conversion is deprecated and might not work in the future.")
 	}
 
-	if flagPullRequestBrowse {
-		launcher, err := utils.BrowserLauncher()
-		utils.Check(err)
-		args.Replace(launcher[0], "", launcher[1:]...)
-		args.AppendParams(pullRequestURL)
-	} else {
-		ui.Println(pullRequestURL)
-		args.NoForward()
-	}
-}
-
-func pullRequestChangesMessage(base, head, fullBase, fullHead string) (string, error) {
-	var (
-		defaultMsg string
-		commitLogs string
-		err        error
-	)
-
-	commits, _ := git.RefList(base, head)
-	if len(commits) == 1 {
-		defaultMsg, err = git.Show(commits[0])
-		if err != nil {
-			return "", err
-		}
-	} else if len(commits) > 1 {
-		commitLogs, err = git.Log(base, head)
-		if err != nil {
-			return "", err
-		}
-	}
-
-	cs := git.CommentChar()
-
-	return renderPullRequestTpl(defaultMsg, cs, fullBase, fullHead, commitLogs)
+	args.NoForward()
+	printBrowseOrCopy(args, pullRequestURL, flagPullRequestBrowse, flagPullRequestCopy)
 }
 
 func parsePullRequestProject(context *github.Project, s string) (p *github.Project, ref string) {
@@ -292,4 +437,14 @@ func parsePullRequestIssueNumber(url string) string {
 	}
 
 	return ""
+}
+
+func findMilestoneNumber(milestones []github.Milestone, name string) (int, error) {
+	for _, milestone := range milestones {
+		if strings.EqualFold(milestone.Title, name) {
+			return milestone.Number, nil
+		}
+	}
+
+	return 0, fmt.Errorf("error: no milestone found with name '%s'", name)
 }

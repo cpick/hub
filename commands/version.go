@@ -2,14 +2,15 @@ package commands
 
 import (
 	"github.com/github/hub/ui"
+	"github.com/github/hub/utils"
 	"github.com/github/hub/version"
 )
 
 var cmdVersion = &Command{
-	Run:   runVersion,
-	Usage: "version",
-	Short: "Show hub version",
-	Long:  `Shows git version and hub client version.`,
+	Run:          runVersion,
+	Usage:        "version",
+	Long:         "Shows git version and hub client version.",
+	GitExtension: true,
 }
 
 func init() {
@@ -17,6 +18,10 @@ func init() {
 }
 
 func runVersion(cmd *Command, args *Args) {
-	ui.Println(version.FullVersion())
+	output, err := version.FullVersion()
+	if output != "" {
+		ui.Println(output)
+	}
+	utils.Check(err)
 	args.NoForward()
 }

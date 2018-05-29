@@ -69,28 +69,27 @@ func report(reportedError error, stack string) {
 
 	gh := NewClient(project.Host)
 
-	issue, err := gh.CreateIssue(project, title, body, []string{"Crash Report"})
+	params := map[string]interface{}{
+		"title":  title,
+		"body":   body,
+		"labels": []string{"Crash Report"},
+	}
+
+	issue, err := gh.CreateIssue(project, params)
 	utils.Check(err)
 
-	ui.Println(issue.HTMLURL)
+	ui.Println(issue.HtmlUrl)
 }
 
 const crashReportTmpl = "Crash report - %v\n\n" +
 	"Error (%s): `%v`\n\n" +
 	"Stack:\n\n```\n%s\n```\n\n" +
 	"Runtime:\n\n```\n%s\n```\n\n" +
-	"Version:\n\n```\n%s\n```\n" +
-	`
-# Creating crash report:
-#
-# This information will be posted as a new issue under github/hub.
-# We're NOT including any information about the command that you were executing,
-# but knowing a little bit more about it would really help us to solve this problem.
-# Feel free to modify the title and the description for this issue.
-`
+	"Version:\n\n```\n%s\n```\n"
 
 func reportTitleAndBody(reportedError error, stack string) (title, body string, err error) {
 	errType := reflect.TypeOf(reportedError).String()
+	fullVersion, _ := version.FullVersion()
 	message := fmt.Sprintf(
 		crashReportTmpl,
 		reportedError,
@@ -98,17 +97,29 @@ func reportTitleAndBody(reportedError error, stack string) (title, body string, 
 		reportedError,
 		stack,
 		runtimeInfo(),
-		version.FullVersion(),
+		fullVersion,
 	)
 
-	editor, err := NewEditor("CRASH_REPORT", "crash report", message)
-	if err != nil {
-		return "", "", err
+	messageBuilder := &MessageBuilder{
+		Filename: "CRASH_REPORT",
+		Title:    "crash report",
+		Message:  message,
+		Edit:     true,
 	}
+	messageBuilder.AddCommentedSection(`Creating crash report:
 
-	defer editor.DeleteFile()
+This information will be posted as a new issue under github/hub.
+We're NOT including any information about the command that you were executing,
+but knowing a little bit more about it would really help us to solve this problem.
+Feel free to modify the title and the description for this issue.`)
 
-	return editor.EditTitleAndBody()
+	title, body, err = messageBuilder.Extract()
+	if err != nil {
+		return
+	}
+	defer messageBuilder.Cleanup()
+
+	return
 }
 
 func runtimeInfo() string {

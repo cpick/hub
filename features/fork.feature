@@ -13,6 +13,7 @@ Feature: hub fork
       }
       get('/repos/mislav/dotfiles', :host_name => 'api.github.com') { 404 }
       post('/repos/evilchelu/dotfiles/forks', :host_name => 'api.github.com') {
+        assert :organization => nil
         status 202
         json :name => 'dotfiles', :owner => { :login => 'mislav' }
       }
@@ -22,6 +23,27 @@ Feature: hub fork
     And "git remote add -f mislav git://github.com/evilchelu/dotfiles.git" should be run
     And "git remote set-url mislav git@github.com:mislav/dotfiles.git" should be run
     And the url for "mislav" should be "git@github.com:mislav/dotfiles.git"
+
+  Scenario: Fork the repository with new remote name specified
+    Given the GitHub API server:
+      """
+      get('/repos/mislav/dotfiles') { 404 }
+      post('/repos/evilchelu/dotfiles/forks') {
+        assert :organization => nil
+        status 202
+        json :name => 'dotfiles', :owner => { :login => 'mislav' }
+      }
+      """
+    When I successfully run `hub fork --remote-name=origin`
+    Then the output should contain exactly:
+      """
+      renaming existing "origin" remote to "upstream"
+      new remote: origin\n
+      """
+    And "git remote add -f origin git://github.com/evilchelu/dotfiles.git" should be run
+    And "git remote set-url origin git@github.com:mislav/dotfiles.git" should be run
+    And the url for "origin" should be "git@github.com:mislav/dotfiles.git"
+    And the url for "upstream" should be "git://github.com/evilchelu/dotfiles.git"
 
   Scenario: Fork the repository with redirect
     Given the GitHub API server:
@@ -92,7 +114,8 @@ Feature: hub fork
       """
       get('/repos/mislav/dotfiles') {
         halt 406 unless request.env['HTTP_ACCEPT'] == 'application/vnd.github.v3+json;charset=utf-8'
-        json :parent => { :html_url => 'https://github.com/unrelated/dotfiles' }
+        json :html_url => 'https://github.com/mislav/dotfiles',
+             :parent => { :html_url => 'https://github.com/unrelated/dotfiles' }
       }
       """
     When I run `hub fork`
@@ -103,16 +126,91 @@ Feature: hub fork
       """
     And there should be no "mislav" remote
 
-Scenario: Related fork already exists
+  Scenario: Related fork already exists
     Given the GitHub API server:
       """
       get('/repos/mislav/dotfiles') {
-        json :parent => { :html_url => 'https://github.com/EvilChelu/Dotfiles' }
+        json :html_url => 'https://github.com/mislav/dotfiles',
+             :parent => { :html_url => 'https://github.com/EvilChelu/Dotfiles' }
       }
       """
     When I run `hub fork`
     Then the exit status should be 0
+    Then the stdout should contain exactly:
+      """
+      new remote: mislav\n
+      """
     And the url for "mislav" should be "git@github.com:mislav/dotfiles.git"
+
+  Scenario: Redirected repo already exists
+    Given the GitHub API server:
+      """
+      get('/repos/mislav/dotfiles') {
+        redirect 'https://api.github.com/repositories/12345', 301
+      }
+      get('/repositories/12345') {
+        json :html_url => 'https://github.com/mislav/old-dotfiles'
+      }
+      post('/repos/evilchelu/dotfiles/forks') {
+        status 202
+        json :name => 'dotfiles', :owner => { :login => 'mislav' }
+      }
+      """
+    When I successfully run `hub fork`
+    And the stdout should contain exactly "new remote: mislav\n"
+
+  Scenario: Unrelated remote already exists
+    Given the "mislav" remote has url "git@github.com:mislav/unrelated.git"
+    Given the GitHub API server:
+      """
+      get('/repos/mislav/dotfiles', :host_name => 'api.github.com') { 404 }
+      post('/repos/evilchelu/dotfiles/forks', :host_name => 'api.github.com') {
+        assert :organization => nil
+        status 202
+        json :name => 'dotfiles', :owner => { :login => 'mislav' }
+      }
+      """
+    When I run `hub fork`
+    Then the exit status should be 128
+    And the stderr should contain exactly:
+      """
+      fatal: remote mislav already exists.\n
+      """
+    And the url for "mislav" should be "git@github.com:mislav/unrelated.git"
+
+  Scenario: Related fork and related remote already exist
+    Given the "mislav" remote has url "git@github.com:mislav/dotfiles.git"
+    Given the GitHub API server:
+      """
+      get('/repos/mislav/dotfiles') {
+        json :html_url => 'https://github.com/mislav/dotfiles',
+             :parent => { :html_url => 'https://github.com/EvilChelu/Dotfiles' }
+      }
+      """
+    When I run `hub fork`
+    Then the exit status should be 0
+    And the stdout should contain exactly:
+      """
+      existing remote: mislav\n
+      """
+    And the url for "mislav" should be "git@github.com:mislav/dotfiles.git"
+
+  Scenario: Related fork and related remote, but with differing protocol, already exist
+    Given the "mislav" remote has url "https://github.com/mislav/dotfiles.git"
+    Given the GitHub API server:
+      """
+      get('/repos/mislav/dotfiles') {
+        json :html_url => 'https://github.com/mislav/dotfiles',
+             :parent => { :html_url => 'https://github.com/EvilChelu/Dotfiles' }
+      }
+      """
+    When I run `hub fork`
+    Then the exit status should be 0
+    And the stdout should contain exactly:
+      """
+      existing remote: mislav\n
+      """
+    And the url for "mislav" should be "https://github.com/mislav/dotfiles.git"
 
   Scenario: Invalid OAuth token
     Given the GitHub API server:
@@ -148,12 +246,11 @@ Scenario: Related fork already exists
 
   Scenario: Origin remote doesn't exist
     Given I run `git remote rm origin`
-    And the "mislav" remote has url "https://github.com/mislav/dotfiles.git"
     When I run `hub fork`
     Then the exit status should be 1
     And the stderr should contain exactly:
       """
-      Error creating fork: No git remote with name origin\n
+      Aborted: the origin remote doesn't point to a GitHub repository.\n
       """
     And there should be no "origin" remote
 
@@ -163,7 +260,7 @@ Scenario: Related fork already exists
     Then the exit status should be 1
     And the stderr should contain exactly:
       """
-      Error: repository under 'origin' remote is not a GitHub project\n
+      Aborted: the origin remote doesn't point to a GitHub repository.\n
       """
 
   Scenario: Enterprise fork
@@ -202,3 +299,17 @@ Scenario: Related fork already exists
     And "git.my.org" is a whitelisted Enterprise host
     When I successfully run `hub fork`
     Then the url for "mislav" should be "git@git.my.org:mislav/dotfiles.git"
+
+  Scenario: Fork a repo to a specific organization
+    Given the GitHub API server:
+      """
+      get('/repos/acme/dotfiles') { 404 }
+      post('/repos/evilchelu/dotfiles/forks') {
+        assert :organization => "acme"
+        status 202
+        json :name => 'dotfiles', :owner => { :login => 'acme' }
+      }
+      """
+    When I successfully run `hub fork --org=acme`
+    Then the output should contain exactly "new remote: acme\n"
+    Then the url for "acme" should be "git@github.com:acme/dotfiles.git"

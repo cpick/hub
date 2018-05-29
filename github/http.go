@@ -18,6 +18,18 @@ import (
 	"github.com/github/hub/utils"
 )
 
+const apiPayloadVersion = "application/vnd.github.v3+json;charset=utf-8"
+const patchMediaType = "application/vnd.github.v3.patch;charset=utf-8"
+const textMediaType = "text/plain;charset=utf-8"
+
+var inspectHeaders = []string{
+	"Authorization",
+	"X-GitHub-OTP",
+	"Location",
+	"Link",
+	"Accept",
+}
+
 type verboseTransport struct {
 	Transport   *http.Transport
 	Verbose     bool
@@ -77,17 +89,22 @@ func (t *verboseTransport) dumpResponse(resp *http.Response) {
 }
 
 func (t *verboseTransport) dumpHeaders(header http.Header, indent string) {
-	dumpHeaders := []string{"Authorization", "X-GitHub-OTP", "Location"}
-	for _, h := range dumpHeaders {
-		v := header.Get(h)
-		if v != "" {
-			r := regexp.MustCompile("(?i)^(basic|token) (.+)")
-			if r.MatchString(v) {
-				v = r.ReplaceAllString(v, "$1 [REDACTED]")
+	for _, listed := range inspectHeaders {
+		for name, vv := range header {
+			if !strings.EqualFold(name, listed) {
+				continue
 			}
+			for _, v := range vv {
+				if v != "" {
+					r := regexp.MustCompile("(?i)^(basic|token) (.+)")
+					if r.MatchString(v) {
+						v = r.ReplaceAllString(v, "$1 [REDACTED]")
+					}
 
-			info := fmt.Sprintf("%s %s: %s", indent, h, v)
-			t.verbosePrintln(info)
+					info := fmt.Sprintf("%s %s: %s", indent, name, v)
+					t.verbosePrintln(info)
+				}
+			}
 		}
 	}
 }
@@ -136,21 +153,9 @@ func newHttpClient(testHost string, verbose bool) *http.Client {
 		Out:         ui.Stderr,
 		Colorized:   ui.IsTerminal(os.Stderr),
 	}
+
 	return &http.Client{
 		Transport: tr,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) > 2 {
-				return fmt.Errorf("too many redirects")
-			} else {
-				for key, vals := range via[0].Header {
-					lkey := strings.ToLower(key)
-					if !strings.HasPrefix(lkey, "x-original-") && via[0].Host == req.URL.Host || lkey != "authorization" {
-						req.Header[key] = vals
-					}
-				}
-				return nil
-			}
-		},
 	}
 }
 
@@ -190,28 +195,32 @@ func proxyFromEnvironment(req *http.Request) (*url.URL, error) {
 }
 
 type simpleClient struct {
-	httpClient  *http.Client
-	rootUrl     *url.URL
-	accessToken string
+	httpClient     *http.Client
+	rootUrl        *url.URL
+	PrepareRequest func(*http.Request)
 }
 
 func (c *simpleClient) performRequest(method, path string, body io.Reader, configure func(*http.Request)) (*simpleResponse, error) {
 	url, err := url.Parse(path)
 	if err == nil {
 		url = c.rootUrl.ResolveReference(url)
-		return c.performRequestUrl(method, url, body, configure, 2)
+		return c.performRequestUrl(method, url, body, configure)
 	} else {
 		return nil, err
 	}
 }
 
-func (c *simpleClient) performRequestUrl(method string, url *url.URL, body io.Reader, configure func(*http.Request), redirectsRemaining int) (res *simpleResponse, err error) {
+func (c *simpleClient) performRequestUrl(method string, url *url.URL, body io.Reader, configure func(*http.Request)) (res *simpleResponse, err error) {
 	req, err := http.NewRequest(method, url.String(), body)
 	if err != nil {
 		return
 	}
-	req.Header.Set("Authorization", "token "+c.accessToken)
+	if c.PrepareRequest != nil {
+		c.PrepareRequest(req)
+	}
 	req.Header.Set("User-Agent", UserAgent)
+	req.Header.Set("Accept", apiPayloadVersion)
+
 	if configure != nil {
 		configure(req)
 	}
@@ -228,18 +237,11 @@ func (c *simpleClient) performRequestUrl(method string, url *url.URL, body io.Re
 	}
 
 	res = &simpleResponse{httpResponse}
-	if res.StatusCode == 307 && redirectsRemaining > 0 {
-		url, err = url.Parse(res.Header.Get("Location"))
-		if err != nil || url.Host != req.URL.Host || url.Scheme != req.URL.Scheme {
-			return
-		}
-		res, err = c.performRequestUrl(method, url, bodyBackup, configure, redirectsRemaining-1)
-	}
 
 	return
 }
 
-func (c *simpleClient) jsonRequest(method, path string, body interface{}) (*simpleResponse, error) {
+func (c *simpleClient) jsonRequest(method, path string, body interface{}, configure func(*http.Request)) (*simpleResponse, error) {
 	json, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -248,6 +250,9 @@ func (c *simpleClient) jsonRequest(method, path string, body interface{}) (*simp
 
 	return c.performRequest(method, path, buf, func(req *http.Request) {
 		req.Header.Set("Content-Type", "application/json; charset=utf-8")
+		if configure != nil {
+			configure(req)
+		}
 	})
 }
 
@@ -255,16 +260,28 @@ func (c *simpleClient) Get(path string) (*simpleResponse, error) {
 	return c.performRequest("GET", path, nil, nil)
 }
 
+func (c *simpleClient) GetFile(path string, mimeType string) (*simpleResponse, error) {
+	return c.performRequest("GET", path, nil, func(req *http.Request) {
+		req.Header.Set("Accept", mimeType)
+	})
+}
+
 func (c *simpleClient) Delete(path string) (*simpleResponse, error) {
 	return c.performRequest("DELETE", path, nil, nil)
 }
 
 func (c *simpleClient) PostJSON(path string, payload interface{}) (*simpleResponse, error) {
-	return c.jsonRequest("POST", path, payload)
+	return c.jsonRequest("POST", path, payload, nil)
 }
 
 func (c *simpleClient) PatchJSON(path string, payload interface{}) (*simpleResponse, error) {
-	return c.jsonRequest("PATCH", path, payload)
+	return c.jsonRequest("PATCH", path, payload, nil)
+}
+
+func (c *simpleClient) PostReview(path string, payload interface{}) (*simpleResponse, error) {
+	return c.jsonRequest("POST", path, payload, func(req *http.Request) {
+		req.Header.Set("Accept", "application/vnd.github.thor-preview+json;charset=utf-8")
+	})
 }
 
 func (c *simpleClient) PostFile(path, filename string) (*simpleResponse, error) {
@@ -331,4 +348,15 @@ func (res *simpleResponse) ErrorInfo() (msg *errorInfo, err error) {
 	}
 
 	return
+}
+
+func (res *simpleResponse) Link(name string) string {
+	linkVal := res.Header.Get("Link")
+	re := regexp.MustCompile(`<([^>]+)>; rel="([^"]+)"`)
+	for _, match := range re.FindAllStringSubmatch(linkVal, -1) {
+		if match[2] == name {
+			return match[1]
+		}
+	}
+	return ""
 }

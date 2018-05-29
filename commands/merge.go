@@ -11,10 +11,17 @@ import (
 var cmdMerge = &Command{
 	Run:          merge,
 	GitExtension: true,
-	Usage:        "merge PULLREQ-URL",
-	Short:        "Join two or more development histories (branches) together",
-	Long: `Merge the pull request with a commit message that includes the pull request
-ID and title, similar to the GitHub Merge Button.
+	Usage:        "merge <PULLREQ-URL>",
+	Long: `Merge a pull request with a message like the GitHub Merge Button.
+
+## Examples:
+		$ hub merge https://github.com/jingweno/gh/pull/73
+		> git fetch origin refs/pull/73/head
+		> git merge FETCH_HEAD --no-ff -m "Merge pull request #73 from jingweno/feature..."
+
+## See also:
+
+hub-checkout(1), hub(1), git-merge(1)
 `,
 }
 
@@ -22,11 +29,6 @@ func init() {
 	CmdRunner.Use(cmdMerge)
 }
 
-/*
-  $ hub merge https://github.com/jingweno/gh/pull/73
-  > git fetch git://github.com/jingweno/gh.git +refs/heads/feature:refs/remotes/jingweno/feature
-  > git merge jingweno/feature --no-ff -m 'Merge pull request #73 from jingweno/feature...'
-*/
 func merge(command *Command, args *Args) {
 	if !args.IsParamsEmpty() {
 		err := transformMergeArgs(args)
@@ -59,23 +61,30 @@ func transformMergeArgs(args *Args) error {
 		return err
 	}
 
+	repo, err := github.LocalRepo()
+	if err != nil {
+		return err
+	}
+
+	remote, err := repo.RemoteForRepo(pullRequest.Base.Repo)
+	if err != nil {
+		return err
+	}
+
 	branch := pullRequest.Head.Ref
 	headRepo := pullRequest.Head.Repo
 	if headRepo == nil {
 		return fmt.Errorf("Error: that fork is not available anymore")
 	}
 
-	u := url.GitURL(headRepo.Name, headRepo.Owner.Login, headRepo.Private)
-	mergeHead := fmt.Sprintf("%s/%s", headRepo.Owner.Login, branch)
-	ref := fmt.Sprintf("+refs/heads/%s:refs/remotes/%s", branch, mergeHead)
-	args.Before("git", "fetch", u, ref)
+	args.Before("git", "fetch", remote.Name, fmt.Sprintf("refs/pull/%s/head", id))
 
 	// Remove pull request URL
 	idx := args.IndexOfParam(mergeURL)
 	args.RemoveParam(idx)
 
-	mergeMsg := fmt.Sprintf("Merge pull request #%v from %s\n\n%s", id, mergeHead, pullRequest.Title)
-	args.AppendParams(mergeHead, "-m", mergeMsg)
+	mergeMsg := fmt.Sprintf("Merge pull request #%s from %s/%s\n\n%s", id, headRepo.Owner.Login, branch, pullRequest.Title)
+	args.AppendParams("FETCH_HEAD", "-m", mergeMsg)
 
 	if args.IndexOfParam("--ff-only") == -1 && args.IndexOfParam("--squash") == -1 && args.IndexOfParam("--ff") == -1 {
 		i := args.IndexOfParam("-m")
