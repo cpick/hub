@@ -81,15 +81,82 @@ Feature: hub pull-request
       post('/repos/mislav/coral/pulls') {
         halt 400 if request.content_charset != 'utf-8'
         assert :title => 'This is somewhat of a longish title that does not get wrapped & references #1234',
-               :body => nil
+               :body => 'Hello'
         status 201
         json :html_url => "the://url"
       }
       """
     Given I am on the "master" branch pushed to "origin/master"
     When I successfully run `git checkout --quiet -b topic`
-    Given I make a commit with message "This is somewhat of a longish title that does not get wrapped & references #1234"
+    Given I make a commit with message:
+      """
+      This is somewhat of a longish title that does not get wrapped & references #1234
+
+      Hello
+      Signed-off-by: NAME <email@example.com>
+      """
     And the "topic" branch is pushed to "origin/topic"
+    When I successfully run `hub pull-request`
+    Then the output should contain exactly "the://url\n"
+
+  Scenario: Single-commit with pull request template
+    Given the git commit editor is "true"
+    Given the GitHub API server:
+      """
+      post('/repos/mislav/coral/pulls') {
+        halt 400 if request.content_charset != 'utf-8'
+        assert :title => 'Commit title',
+               :body => <<BODY.chomp
+      Commit body
+
+
+       This is the pull request template
+
+      Another line of template
+      BODY
+        status 201
+        json :html_url => "the://url"
+      }
+      """
+    Given I am on the "master" branch pushed to "origin/master"
+    When I successfully run `git checkout --quiet -b topic`
+    And I make a commit with message:
+      """
+      Commit title
+
+      Commit body
+      """
+    And the "topic" branch is pushed to "origin/topic"
+    Given a file named "pull_request_template.md" with:
+      """
+       This is the pull request template
+
+      Another line of template
+      """
+    When I successfully run `hub pull-request`
+    Then the output should contain exactly "the://url\n"
+
+  Scenario: Single-commit with PULL_REQUEST_TEMPLATE directory
+    Given the git commit editor is "true"
+    Given the GitHub API server:
+      """
+      post('/repos/mislav/coral/pulls') {
+        assert :title => 'Commit title',
+               :body => 'Commit body'
+        status 201
+        json :html_url => "the://url"
+      }
+      """
+    Given I am on the "master" branch pushed to "origin/master"
+    When I successfully run `git checkout --quiet -b topic`
+    And I make a commit with message:
+      """
+      Commit title
+
+      Commit body
+      """
+    And the "topic" branch is pushed to "origin/topic"
+    And a directory named "PULL_REQUEST_TEMPLATE"
     When I successfully run `hub pull-request`
     Then the output should contain exactly "the://url\n"
 
@@ -289,6 +356,29 @@ Feature: hub pull-request
     Then the output should contain exactly "https://github.com/mislav/coral/pull/12\n"
     And the file ".git/PULLREQ_EDITMSG" should not exist
 
+  Scenario: Edit title and body from file
+    Given the GitHub API server:
+      """
+      post('/repos/mislav/coral/pulls') {
+        assert :title => 'Hello from editor',
+               :body  => "Title from file\n\nBody from file as well."
+        status 201
+        json :html_url => "https://github.com/mislav/coral/pull/12"
+      }
+      """
+    And a file named "pullreq-msg" with:
+      """
+      Title from file
+
+      Body from file as well.
+      """
+    And the text editor adds:
+      """
+      Hello from editor
+      """
+    When I successfully run `hub pull-request -F pullreq-msg --edit`
+    Then the file ".git/PULLREQ_EDITMSG" should not exist
+
   Scenario: Title and body from stdin
     Given the GitHub API server:
       """
@@ -441,17 +531,29 @@ Feature: hub pull-request
     Given I am on the "feature" branch with upstream "origin/feature"
     Given the GitHub API server:
       """
+      tries = 0
       post('/repos/mislav/coral/pulls') {
-        status 422
-        json(:message => "I haz fail!")
+        tries += 1
+        if tries == 1
+          status 422
+          json :message => 'Validation Failed',
+               :errors => [{
+                 :resource => 'PullRequest',
+                 :code => 'invalid',
+                 :field => 'head'
+               }]
+        else
+          status 400
+        end
       }
       """
     When I run `hub pull-request -m message`
     Then the stderr should contain exactly:
       """
       Error creating pull request: Unprocessable Entity (HTTP 422)
-      I haz fail!\n
+      Invalid value for "head"\n
       """
+    And the exit status should be 1
 
   Scenario: Convert issue to pull request
     Given I am on the "feature" branch with upstream "origin/feature"
@@ -645,6 +747,144 @@ Feature: hub pull-request
     When I successfully run `hub pull-request -m hereyougo`
     Then the output should contain exactly "the://url\n"
 
+  Scenario: Pull request with assignees
+    Given I am on the "feature" branch with upstream "origin/feature"
+    Given the GitHub API server:
+      """
+      post('/repos/mislav/coral/pulls') {
+        assert :head  => "mislav:feature"
+        status 201
+        json :html_url => "the://url", :number => 1234
+      }
+      patch('/repos/mislav/coral/issues/1234') {
+        assert :assignees => ["mislav", "josh", "pcorpet"], :labels => :no
+        json :html_url => "the://url"
+      }
+      """
+    When I successfully run `hub pull-request -m hereyougo -a mislav,josh -apcorpet`
+    Then the output should contain exactly "the://url\n"
+
+  Scenario: Pull request with reviewers
+    Given I am on the "feature" branch with upstream "origin/feature"
+    Given the GitHub API server:
+      """
+      post('/repos/mislav/coral/pulls') {
+        assert :head  => "mislav:feature"
+        status 201
+        json :html_url => "the://url", :number => 1234
+      }
+      post('/repos/mislav/coral/pulls/1234/requested_reviewers') {
+        halt 415 unless request.accept?('application/vnd.github.thor-preview+json')
+        assert :reviewers => ["mislav", "josh", "pcorpet"]
+        assert :team_reviewers => ["robots", "js"]
+        status 201
+        json :html_url => "the://url"
+      }
+      """
+    When I successfully run `hub pull-request -m hereyougo -r mislav,josh -rgithub/robots -rpcorpet -r github/js`
+    Then the output should contain exactly "the://url\n"
+
+  Scenario: Pull request with milestone
+    Given I am on the "feature" branch with upstream "origin/feature"
+    Given the GitHub API server:
+      """
+      get('/repos/mislav/coral/milestones') {
+        status 200
+        json [
+          { :number => 237, :title => "prerelease" },
+          { :number => 1337, :title => "v1" },
+          { :number => 41319, :title => "Hello World!" }
+        ]
+      }
+      post('/repos/mislav/coral/pulls') {
+        assert :head  => "mislav:feature"
+        status 201
+        json :html_url => "the://url", :number => 1234
+      }
+      patch('/repos/mislav/coral/issues/1234') {
+        assert :milestone => 41319
+        json :html_url => "the://url"
+      }
+      """
+    When I successfully run `hub pull-request -m hereyougo -M "Hello World!"`
+    Then the output should contain exactly "the://url\n"
+
+  Scenario: Pull request with case-insensitive milestone
+    Given I am on the "feature" branch with upstream "origin/feature"
+    Given the GitHub API server:
+      """
+      get('/repos/mislav/coral/milestones') {
+        status 200
+        json [
+          { :number => 237, :title => "prerelease" },
+          { :number => 1337, :title => "v1" },
+          { :number => 41319, :title => "Hello World!" }
+        ]
+      }
+      post('/repos/mislav/coral/pulls') {
+        assert :head  => "mislav:feature"
+        status 201
+        json :html_url => "the://url", :number => 1234
+      }
+      patch('/repos/mislav/coral/issues/1234') {
+        assert :milestone => 41319
+        json :html_url => "the://url"
+      }
+      """
+    When I successfully run `hub pull-request -m hereyougo -M "hello world!"`
+    Then the output should contain exactly "the://url\n"
+
+  Scenario: Pull request uses integer milestone number for BC
+    Given I am on the "feature" branch with upstream "origin/feature"
+    Given the GitHub API server:
+      """
+      get('/repos/mislav/coral/milestones') {
+        status 200
+        json [{ :number => 237, :title => "prerelease" }]
+      }
+      post('/repos/mislav/coral/pulls') {
+        assert :head  => "mislav:feature"
+        status 201
+        json :html_url => "the://url", :number => 1234
+      }
+      patch('/repos/mislav/coral/issues/1234') {
+        assert :milestone => 55
+        json :html_url => "the://url"
+      }
+      """
+    When I successfully run `hub pull-request -m hereyougo -M 55`
+    Then the output should contain exactly "the://url\n"
+
+  Scenario: Pull request fails with unknown milestone before it's created
+    Given I am on the "feature" branch with upstream "origin/feature"
+    Given the GitHub API server:
+      """
+      get('/repos/mislav/coral/milestones') {
+        status 200
+        json []
+      }
+      """
+    When I run `hub pull-request -m hereyougo -M "unknown"`
+    Then the exit status should be 1
+    And the stderr should contain exactly "error: no milestone found with name 'unknown'\n"
+
+  Scenario: Pull request with labels
+    Given I am on the "feature" branch with upstream "origin/feature"
+    Given the GitHub API server:
+      """
+      post('/repos/mislav/coral/pulls') {
+        assert :head  => "mislav:feature"
+        status 201
+        json :html_url => "the://url", :number => 1234
+      }
+      patch('/repos/mislav/coral/issues/1234') {
+        assert :labels => ["feature", "release", "docs"], :assignees => :no
+        json :html_url => "the://url"
+      }
+      """
+    When I successfully run `hub pull-request -m hereyougo -l feature,release -ldocs`
+    Then the output should contain exactly "the://url\n"
+
   Scenario: Pull request to a fetch-only upstream
     Given the "upstream" remote has url "git://github.com/github/coral.git"
     And the "upstream" remote has push url "no_push"
@@ -687,18 +927,96 @@ Feature: hub pull-request
     When I successfully run `hub pull-request -m hereyougo`
     Then the output should contain exactly "the://url\n"
 
-  Scenario: Redirect to another host is not followed
-    Given the "origin" remote has url "https://github.com/mislav/coral.git"
-    And I am on the "feature" branch pushed to "origin/feature"
+  Scenario: Default message with --push
+    Given the git commit editor is "true"
     Given the GitHub API server:
       """
       post('/repos/mislav/coral/pulls') {
-        redirect 'https://disney.com/mouse', 307
+        assert :title => 'The commit I never pushed',
+               :body => nil
+        status 201
+        json :html_url => "the://url"
       }
       """
-    When I run `hub pull-request -m hereyougo`
-    Then the stderr should contain exactly:
+    Given I am on the "master" branch pushed to "origin/master"
+    When I successfully run `git checkout --quiet -b topic`
+    Given I make a commit with message "The commit I never pushed"
+    When I successfully run `hub pull-request -p`
+    Then the output should contain exactly "the://url\n"
+    And "git push --set-upstream origin HEAD:topic" should be run
+
+  Scenario: Text editor fails with --push
+    Given the text editor exits with error status
+    And I am on the "master" branch pushed to "origin/master"
+    And an empty file named ".git/PULLREQ_EDITMSG"
+    When I successfully run `git checkout --quiet -b topic`
+    Given I make a commit
+    When I run `hub pull-request -p`
+    Then the stderr should contain "error using text editor for pull request message"
+    And the exit status should be 1
+    And the file ".git/PULLREQ_EDITMSG" should not exist
+    And "git push --set-upstream origin HEAD:topic" should not be run
+
+  Scenario: Automatically retry when --push resulted in 422
+    Given The default aruba timeout is 7 seconds
+    And the text editor adds:
       """
-      Error creating pull request: Temporary Redirect (HTTP 307)
-      Refused to follow redirect to https://disney.com/mouse\n
+      hello!
       """
+    Given the GitHub API server:
+      """
+      first_try_at = nil
+      tries = 0
+
+      post('/repos/mislav/coral/pulls') {
+        tries += 1
+        assert :title => 'hello!', :head => 'mislav:topic'
+
+        if !first_try_at || (Time.now - first_try_at) < 5
+          first_try_at ||= Time.now
+          status 422
+          json :message => 'Validation Failed',
+               :errors => [{
+                 :resource => 'PullRequest',
+                 :code => 'invalid',
+                 :field => 'head'
+               }]
+        else
+          status 201
+          json :html_url => "the://url?tries=#{tries}"
+        end
+      }
+      """
+    Given I am on the "topic" branch
+    When I successfully run `hub pull-request -p`
+    Then the output should contain exactly "the://url?tries=3\n"
+    And the file ".git/PULLREQ_EDITMSG" should not exist
+
+  Scenario: Eventually give up on retries for --push
+    Given The default aruba timeout is 7 seconds
+    And the text editor adds:
+      """
+      hello!
+      """
+    And $HUB_RETRY_TIMEOUT is "5"
+    Given the GitHub API server:
+      """
+      post('/repos/mislav/coral/pulls') {
+        status 422
+        json :message => 'Validation Failed',
+             :errors => [{
+               :resource => 'PullRequest',
+               :code => 'invalid',
+               :field => 'head'
+             }]
+      }
+      """
+    Given I am on the "topic" branch
+    When I run `hub pull-request -p`
+    Then the stderr should contain:
+      """
+      Error creating pull request: Unprocessable Entity (HTTP 422)
+      Invalid value for "head"\n
+      """
+    And the output should match /Given up after retrying for 5\.\d seconds\./
+    And a file named ".git/PULLREQ_EDITMSG" should exist

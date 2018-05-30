@@ -10,7 +10,6 @@ import (
 	"github.com/github/hub/cmd"
 	"github.com/github/hub/git"
 	"github.com/github/hub/ui"
-	"github.com/github/hub/utils"
 	"github.com/kballard/go-shellquote"
 	flag "github.com/ogier/pflag"
 )
@@ -77,19 +76,18 @@ func (r *Runner) Lookup(name string) *Command {
 
 func (r *Runner) Execute() ExecError {
 	args := NewArgs(os.Args[1:])
+	args.ProgramPath = os.Args[0]
 	forceFail := false
 
-	if args.Command == "" {
+	if args.Command == "" && len(args.GlobalFlags) == 0 {
 		args.Command = "help"
 		forceFail = true
 	}
 
-	updater := NewUpdater()
-	err := updater.PromptForUpdate()
-	utils.Check(err)
-
 	git.GlobalFlags = args.GlobalFlags // preserve git global flags
-	expandAlias(args)
+	if !isBuiltInHubCommand(args.Command) {
+		expandAlias(args)
+	}
 
 	cmd := r.Lookup(args.Command)
 	if cmd != nil && cmd.Runnable() {
@@ -100,7 +98,10 @@ func (r *Runner) Execute() ExecError {
 		return execErr
 	}
 
-	err = git.Run(args.Command, args.Params...)
+	gitArgs := []string{args.Command}
+	gitArgs = append(gitArgs, args.Params...)
+
+	err := git.Run(gitArgs...)
 	return newExecError(err)
 }
 
@@ -159,13 +160,23 @@ func executeCommands(cmds []*cmd.Cmd, execFinal bool) error {
 func expandAlias(args *Args) {
 	cmd := args.Command
 	expandedCmd, err := git.Alias(cmd)
-	if err == nil && expandedCmd != "" {
+
+	if err == nil && expandedCmd != "" && !git.IsBuiltInGitCommand(cmd) {
 		words, e := splitAliasCmd(expandedCmd)
 		if e == nil {
 			args.Command = words[0]
 			args.PrependParams(words[1:]...)
 		}
 	}
+}
+
+func isBuiltInHubCommand(command string) bool {
+	for hubCommand, _ := range CmdRunner.All() {
+		if hubCommand == command {
+			return true
+		}
+	}
+	return false
 }
 
 func splitAliasCmd(cmd string) ([]string, error) {
