@@ -1,3 +1,42 @@
+hub (2.3.0-0ubuntu0ppa1) xenial; urgency=low
+
+  New commands:
+  * hub issue: list and create issues and labels
+  * hub pr list: list pull requests for the current repository
+  * hub pr checkout <NUMBER>: checkout a pull request by its number
+  * hub release: list, create, edit, and delete releases and attachments
+  * hub sync: fetch updates from remote repository and sync all local branches
+    to their upstream equivalents, purging merged ones
+
+  Improved commands:
+  * hub pull-request now has the ability to set assignees, labels, reviewers,
+    and milestones.
+  * hub pull-request and hub issue create now support pull request and issue
+    templates.
+  * Commands that print the resulting URL, such as hub pull-request or hub
+    create, now accept --copy to put the URL to the system clipboard instead.
+  * hub pull-request now supports --push and --open flags to push the head
+    branch to the remote and open the resulting PR in a web browser, respectively.
+  * hub pull-request now strips away the Signed-off-by line and the commit
+    signature when generating the default pull request message.
+  * Commands that take input via -m or -F arguments now also respect --edit to
+    additionally edit the text in a text editor before submitting.
+  * Support core.commentchar=auto git configuration when editing pull
+    request/issue/release message in a text editor.
+  * Support /OWNER/REPO/pull/XYZ/commits/SHA format of URLs as argument to
+    cherry-pick, am, and apply.
+  * Commands such as cherry-pick, merge <PR-URL>, and checkout <PR-URL> don't
+    leave leftover git remotes anymore.
+  * New hub compare -b BASE flag.
+  * New hub fork --org=ORGANIZATION flag.
+  * New hub fork --remote-name=NAME flag to configure the new git remote.
+  * New, manpage-based help system; see hub help hub and hub help hub-<command>.
+  * Added fish shell completion script.
+  * When prompted to authenticate with username/password, pasting a Personal
+    Access Token now works just as well instead of the password.
+
+ -- Chris Pick <chris@chrispick.com>  Wed, 30 May 2018 13:02:34 -0400
+
 hub (2.2.9-0ubuntu0ppa1) xenial; urgency=low
 
   * Ensure that HUB_VERBOSE logging always happens in Exec()
