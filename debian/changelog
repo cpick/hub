@@ -1,3 +1,19 @@
+hub (2.4.0-0ubuntu0ppa1) xenial; urgency=low
+
+  Features
+  * hub delete [<OWNER>/]<REPO>
+  * Add hub compare --copy flag
+  * Add hub release --format=<FORMAT> option
+  * Add hub pull-request --no-edit flag
+  * When checking out a pull request, ensure that git pushwith no arguments works
+  * Support XDG Base Directory Specification
+
+  Tweaks
+  * Enable hub pr list -h <BRANCH> when owner isn't specified
+  * Include docs/ in list of locations to look up pull request and issue templates in
+
+ -- Chris Pick <chris@chrispick.com>  Tue, 12 Jun 2018 12:55:58 -0400
+
 hub (2.3.0-0ubuntu0ppa1) xenial; urgency=low
 
   New commands:
